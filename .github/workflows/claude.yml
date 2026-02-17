@@ -33,9 +33,8 @@ jobs:
       - name: Extract effort level from issue body
         id: effort
         run: |
-          # Extract effort level from issue body (looks for **Effort:** Low/Medium/High)
-          ISSUE_BODY="${{ github.event.issue.body || github.event.comment.body || '' }}"
-          EFFORT=$(echo "$ISSUE_BODY" | grep -oiE '\*\*Effort:\*\*[[:space:]]*(Low|Medium|High)' | grep -oiE '(low|medium|high)' | head -1 || echo "high")
+          # Safely read issue body from the GitHub event payload (avoids shell injection from backticks)
+          EFFORT=$(jq -r '.issue.body // .comment.body // ""' "$GITHUB_EVENT_PATH" | grep -oiE '\*\*Effort:\*\*[[:space:]]*(Low|Medium|High)' | grep -oiE 'low|medium|high' | head -1 || true)
           EFFORT=$(echo "${EFFORT:-high}" | tr '[:upper:]' '[:lower:]')
           echo "level=$EFFORT" >> $GITHUB_OUTPUT
           echo "Detected effort level: $EFFORT"
