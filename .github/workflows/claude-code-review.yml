@@ -12,6 +12,11 @@ on:
 
 jobs:
   claude-review:
+    # Disabled: PR review functionality is disabled but code is preserved.
+    # To re-enable, remove the 'if: false' line below.
+    # See: https://warahi.atlassian.net/browse/AWF-8
+    if: false
+
     # Optional: Filter by PR author
     # if: |
     #   github.event.pull_request.user.login == 'external-contributor' ||
