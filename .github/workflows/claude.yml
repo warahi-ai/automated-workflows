@@ -30,6 +30,16 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Extract effort level from issue body
+        id: effort
+        run: |
+          # Extract effort level from issue body (looks for **Effort:** Low/Medium/High)
+          ISSUE_BODY="${{ github.event.issue.body || github.event.comment.body || '' }}"
+          EFFORT=$(echo "$ISSUE_BODY" | grep -oiE '\*\*Effort:\*\*[[:space:]]*(Low|Medium|High)' | grep -oiE '(low|medium|high)' | head -1 || echo "high")
+          EFFORT=$(echo "${EFFORT:-high}" | tr '[:upper:]' '[:lower:]')
+          echo "level=$EFFORT" >> $GITHUB_OUTPUT
+          echo "Detected effort level: $EFFORT"
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
@@ -40,10 +50,8 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-          claude_args: '--model opus'
-
+          claude_args: '--model opus --allowed-tools Bash(gh pr:*)'
+        env:
+          CLAUDE_CODE_EFFORT_LEVEL: ${{ steps.effort.outputs.level }}
