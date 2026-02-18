@@ -1,0 +1,186 @@
+name: Sync PR to Jira
+
+on:
+  pull_request:
+    types: [opened]
+    branches: [develop]
+
+jobs:
+  jira-sync:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+    steps:
+      - name: Extract Jira key
+        id: jira
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jiraKeyPattern = /[A-Z][A-Z0-9]+-\d+/;
+            let jiraKey = null;
+
+            // Strategy 1: PR body → linked issue → issue title/body
+            const prBody = context.payload.pull_request.body || '';
+            const closesMatch = prBody.match(/(?:Closes|Fixes|Resolves)\s+#(\d+)/i);
+            if (closesMatch) {
+              const issueNumber = parseInt(closesMatch[1]);
+              core.info(`Found linked issue #${issueNumber} in PR body`);
+              try {
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                });
+                // Check issue title for [JIRA-KEY] pattern
+                const titleMatch = issue.data.title.match(/^\[([A-Z][A-Z0-9]+-\d+)\]/);
+                if (titleMatch) {
+                  jiraKey = titleMatch[1];
+                  core.info(`Found Jira key from issue title: ${jiraKey}`);
+                }
+                // Fallback: check issue body for **Key:** JIRA-KEY
+                if (!jiraKey && issue.data.body) {
+                  const bodyKeyMatch = issue.data.body.match(/\*\*Key:\*\*\s*([A-Z][A-Z0-9]+-\d+)/);
+                  if (bodyKeyMatch) {
+                    jiraKey = bodyKeyMatch[1];
+                    core.info(`Found Jira key from issue body: ${jiraKey}`);
+                  }
+                }
+              } catch (err) {
+                core.warning(`Could not fetch issue #${issueNumber}: ${err.message}`);
+              }
+            }
+
+            // Strategy 2: PR title
+            if (!jiraKey) {
+              const titleMatch = context.payload.pull_request.title.match(jiraKeyPattern);
+              if (titleMatch) {
+                jiraKey = titleMatch[0];
+                core.info(`Found Jira key from PR title: ${jiraKey}`);
+              }
+            }
+
+            // Strategy 3: Branch name
+            if (!jiraKey) {
+              const branch = context.payload.pull_request.head.ref;
+              const branchMatch = branch.match(jiraKeyPattern);
+              if (branchMatch) {
+                jiraKey = branchMatch[0];
+                core.info(`Found Jira key from branch name: ${jiraKey}`);
+              }
+            }
+
+            if (!jiraKey) {
+              core.warning('No Jira key found in PR. Skipping Jira sync.');
+              core.setOutput('found', 'false');
+              return;
+            }
+
+            core.setOutput('found', 'true');
+            core.setOutput('key', jiraKey);
+
+      - name: Transition Jira ticket to Review
+        if: steps.jira.outputs.found == 'true'
+        continue-on-error: true
+        env:
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL || 'https://warahi.atlassian.net' }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_KEY: ${{ steps.jira.outputs.key }}
+          TARGET_STATUS: ${{ vars.JIRA_REVIEW_STATUS || 'Review' }}
+        run: |
+          AUTH=$(printf '%s:%s' "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 -w 0)
+
+          # Get available transitions
+          TRANSITIONS_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Basic $AUTH" \
+            -H "Content-Type: application/json" \
+            "$JIRA_BASE_URL/rest/api/3/issue/$JIRA_KEY/transitions")
+
+          HTTP_CODE=$(echo "$TRANSITIONS_RESPONSE" | tail -1)
+          BODY=$(echo "$TRANSITIONS_RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::Failed to get transitions for $JIRA_KEY (HTTP $HTTP_CODE)"
+            exit 0
+          fi
+
+          # Find the transition ID for the target status
+          TRANSITION_ID=$(echo "$BODY" | jq -r --arg status "$TARGET_STATUS" \
+            '.transitions[] | select(.name == $status) | .id' | head -1)
+
+          if [ -z "$TRANSITION_ID" ]; then
+            AVAILABLE=$(echo "$BODY" | jq -r '.transitions[].name' | tr '\n' ', ')
+            echo "::warning::Transition '$TARGET_STATUS' not available for $JIRA_KEY. Available: $AVAILABLE"
+            exit 0
+          fi
+
+          # Execute the transition
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Basic $AUTH" \
+            -H "Content-Type: application/json" \
+            -d "{\"transition\":{\"id\":\"$TRANSITION_ID\"}}" \
+            "$JIRA_BASE_URL/rest/api/3/issue/$JIRA_KEY/transitions")
+
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "Transitioned $JIRA_KEY to '$TARGET_STATUS'"
+          else
+            echo "::warning::Failed to transition $JIRA_KEY (HTTP $HTTP_CODE)"
+          fi
+
+      - name: Add PR link comment to Jira
+        if: steps.jira.outputs.found == 'true'
+        env:
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL || 'https://warahi.atlassian.net' }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_KEY: ${{ steps.jira.outputs.key }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          AUTH=$(printf '%s:%s' "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 -w 0)
+
+          # Build ADF comment body with a clickable link
+          COMMENT_BODY=$(jq -n \
+            --arg text "Pull Request opened: #$PR_NUMBER $PR_TITLE" \
+            --arg url "$PR_URL" \
+            '{
+              body: {
+                version: 1,
+                type: "doc",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [
+                      {
+                        type: "text",
+                        text: $text,
+                        marks: [
+                          {
+                            type: "link",
+                            attrs: {
+                              href: $url
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }')
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Basic $AUTH" \
+            -H "Content-Type: application/json" \
+            -d "$COMMENT_BODY" \
+            "$JIRA_BASE_URL/rest/api/3/issue/$JIRA_KEY/comment")
+
+          if [ "$HTTP_CODE" = "201" ]; then
+            echo "Added PR comment to $JIRA_KEY"
+          else
+            echo "::error::Failed to add comment to $JIRA_KEY (HTTP $HTTP_CODE)"
+            exit 1
+          fi
