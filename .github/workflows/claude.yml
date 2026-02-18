@@ -52,7 +52,12 @@ jobs:
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
           claude_args: '--model opus --allowed-tools Bash(gh pr:*)'
-          # Temporarily enabled to verify effort level is being applied
-          show_full_output: true
+
+          custom_instructions: |
+            IMPORTANT: After pushing your changes, you MUST create the Pull Request automatically using the gh CLI.
+            Do NOT just provide a "Create PR" link. Actually run the command to create the PR.
+            Use this command:
+            gh pr create --base develop --head <your-branch-name> --title "<title>" --body "<body>"
+            The PR must target the develop branch.
         env:
           CLAUDE_CODE_EFFORT_LEVEL: ${{ steps.effort.outputs.level }}
