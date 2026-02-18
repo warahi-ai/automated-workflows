@@ -51,13 +51,9 @@ jobs:
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-          claude_args: '--model opus --allowed-tools Bash(gh pr:*)'
-
-          custom_instructions: |
-            IMPORTANT: After pushing your changes, you MUST create the Pull Request automatically using the gh CLI.
-            Do NOT just provide a "Create PR" link. Actually run the command to create the PR.
-            Use this command:
-            gh pr create --base develop --head <your-branch-name> --title "<title>" --body "<body>"
-            The PR must target the develop branch.
+          claude_args: |
+            --model opus
+            --allowedTools "Bash(git:*),Bash(gh pr:*),Bash(gh issue:*)"
+            --append-system-prompt "After completing your changes, you MUST create the Pull Request automatically. Follow this workflow: 1) Create a new branch with a descriptive name. 2) Commit your changes with a clear message. 3) Push the branch to the remote. 4) Run: gh pr create --base develop --head $(git branch --show-current) --title '<descriptive title>' --body 'Closes #<issue_number> - <summary of changes>'. The PR must target the develop branch. Never ask the user to create the PR manually or provide a Create PR link. Always reference the issue number in the PR body so it auto-closes when merged."
         env:
           CLAUDE_CODE_EFFORT_LEVEL: ${{ steps.effort.outputs.level }}
