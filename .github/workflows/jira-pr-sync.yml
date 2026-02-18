@@ -86,7 +86,7 @@ jobs:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           JIRA_KEY: ${{ steps.jira.outputs.key }}
-          TARGET_STATUS: ${{ vars.JIRA_REVIEW_STATUS || 'Review' }}
+          TARGET_STATUS: ${{ vars.JIRA_REVIEW_STATUS || 'In Review' }}
         run: |
           AUTH=$(printf '%s:%s' "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 -w 0)
 
