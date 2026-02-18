@@ -52,5 +52,7 @@ jobs:
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
           claude_args: '--model opus --allowed-tools Bash(gh pr:*)'
+          # Temporarily enabled to verify effort level is being applied
+          show_full_output: true
         env:
           CLAUDE_CODE_EFFORT_LEVEL: ${{ steps.effort.outputs.level }}
